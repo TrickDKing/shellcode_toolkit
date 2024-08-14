@@ -11,3 +11,6 @@ $ python main.py -f [file]
 4. python/python3 -m pip install -r requirements.txt
 5. Open a Windows Prompt and execute the script
 6. F6 > Attach to process
+   
+## Features 
+\xcc INT3 DEBUG byte automatically added at the front of shellcode for debug
