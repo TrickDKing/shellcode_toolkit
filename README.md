@@ -1,5 +1,5 @@
 # shellcode_toolkit
-Mini capstone project for assembling and disassembling shellcode
+Mini capstone project for assembling and disassembling shellcode\n
 Using WinDbg to figure out the WinAPI calls and set a breakpoint right before certain WinAPI calls involving external connection/socket communications
 ### How to use, execute 32-bit or 64-bit Python3 according to architecture of shellcode 
 $ python main.py -f [file] 
